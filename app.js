@@ -51,7 +51,7 @@ const UNIT_IDX = Object.fromEntries(UNITS.map((u, i) => [u.id, i]));
 
 // ---------- State ----------
 const KEY = 'kana.v1';
-const defaults = () => ({ cards: {}, settings: { newPerDay: 10, romaji: true, tts: true, strict: false }, day: { date: todayKey(), n: 0, rev: 0 }, unlocked: { h1: true }, streak: { last: '', n: 0 }, log: {} });
+const defaults = () => ({ cards: {}, settings: { newPerDay: 10, romaji: true, tts: true, strict: false, extra: 6 }, day: { date: todayKey(), n: 0, rev: 0 }, unlocked: { h1: true }, intro: {}, streak: { last: '', n: 0 }, log: {} });
 let S = defaults();
 try { const j = JSON.parse(localStorage.getItem(KEY)); if (j) S = Object.assign(defaults(), j, { settings: Object.assign(defaults().settings, j.settings || {}) }); } catch (e) { }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Could not save progress'); } }
@@ -92,7 +92,7 @@ function refreshUnlocks() {
   for (let i = 1; i < UNITS.length; i++) {
     if (S.unlocked[UNITS[i].id]) continue;
     const p = UNITS[i - 1], st = unitStats(p);
-    if (st.intro === st.total && st.rev >= Math.ceil(st.total * 0.6)) { S.unlocked[UNITS[i].id] = true; save(); toast('Unlocked: ' + UNITS[i].name); }
+    if (st.intro === st.total && st.rev >= Math.ceil(st.total * 0.6) && (S.intro || {})[p.id] !== todayKey()) { S.unlocked[UNITS[i].id] = true; save(); toast('Unlocked: ' + UNITS[i].name); }
     break;
   }
 }
@@ -104,6 +104,13 @@ function dueCards(ahead = 0) { const t = now() + ahead; return Object.keys(S.car
 function newCards(limit) {
   const out = []; for (const u of UNITS) { if (!S.unlocked[u.id]) continue; for (const id of u.cards) { if (out.length >= limit) return out; if (cs(id).s === 'new') out.push(id); } }
   return out;
+}
+// Reinforcement: weakest learned kana/vocab that are not due — interleaved retrieval practice.
+function extraCards(n, exclude) {
+  if (!n) return [];
+  const pool = Object.keys(S.cards).filter(id => CARDS[id] && S.cards[id].s === 'rev' && !exclude.has(id));
+  const weight = id => { const c = S.cards[id]; return (c.lapses + 1) * 3 / Math.max(1, c.ivl) + (c.ease < 2 ? 1 : 0) + Math.random(); };
+  return pool.sort((a, b) => weight(b) - weight(a)).slice(0, n);
 }
 function newBudget() { rollDay(); return Math.max(0, S.settings.newPerDay - S.day.n); }
 
@@ -120,9 +127,9 @@ const speakBtn = t => h('button', { class: 'speak', title: 'Listen', onclick: e 
 
 // ---------- Navigation ----------
 let view = 'home';
-function go(v, arg) { view = v; if (session && session.timer) clearInterval(session.timer); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); window.scrollTo(0, 0); ({ home, kana, sent, settings, study, practice, unit }[v])(arg); }
+function go(v, arg) { view = v; if (session && session.timer) clearInterval(session.timer); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); window.scrollTo(0, 0); ({ home, kana, sent, settings, study, practice, unit, drill }[v])(arg); }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => go(b.dataset.v));
-function setTitle(t, right) { $('#title').textContent = t; const r = $('#hdr-right'); r.innerHTML = ''; if (right) r.append(right); if (deferredPrompt) r.append(h('button', { class: 'btn sm primary', onclick: () => { deferredPrompt.prompt(); deferredPrompt = null; setTitle(t, right); } }, 'Install')); }
+function setTitle(t, right) { $('#title').textContent = t; const r = $('#hdr-right'); r.innerHTML = ''; r.append(h('button', { class: 'speak', title: 'Sound on/off', style: S.settings.tts ? '' : 'opacity:.4', onclick: () => { S.settings.tts = !S.settings.tts; save(); if (!S.settings.tts && 'speechSynthesis' in window) speechSynthesis.cancel(); toast(S.settings.tts ? 'Sound on' : 'Sound off'); setTitle(t, right); } }, S.settings.tts ? '🔊' : '🔇')); if (right) r.append(right); if (deferredPrompt) r.append(h('button', { class: 'btn sm primary', onclick: () => { deferredPrompt.prompt(); deferredPrompt = null; setTitle(t, right); } }, 'Install')); }
 
 // ---------- Home ----------
 function home() {
@@ -147,6 +154,15 @@ function home() {
         h('span', {}, state === 'done' ? '✓' : state === 'active' ? '●' : '○'), h('span', {}, u.name),
         h('span', { class: 'st' }, state === 'locked' ? 'locked' : `${st.rev}/${st.total}`));
     })),
+    h('h2', {}, 'How to use it'),
+    h('div', { class: 'card small' }, h('ul', { style: 'margin:0;padding-left:18px' },
+      h('li', {}, 'Every day, short. 10–15 minutes beats an hour on Sunday. Reviews are scheduled to land just before you forget.'),
+      h('li', {}, 'One row a day. The next row unlocks the day after you finish this one — sleep on it, review, then add.'),
+      h('li', {}, 'Say every kana and sentence out loud when it appears. Sound, shape and meaning stored together are recalled together.'),
+      h('li', {}, 'Write from memory as early as you can bear. Tracing is scaffolding; recall is what builds the memory.'),
+      h('li', {}, 'Grade honestly. "Again" is not failure, it is information the scheduler needs.'),
+      h('li', {}, 'Turn romaji off in Settings once a row feels easy. Reading kana directly is the point.'),
+      h('li', {}, 'Use "Practise this row" for extra repetitions whenever you want — it never inflates your review intervals.'))),
     h('p', { class: 'small muted' }, `${learned} cards learned · ${Object.keys(CARDS).length} total. ` + D.CREDITS));
 }
 
@@ -156,7 +172,7 @@ function unit(u) {
   main.innerHTML = '';
   const st = unitStats(u), state = unitState(u);
   const wrap = h('div', {});
-  if (state === 'locked') wrap.append(h('div', { class: 'card' }, h('p', {}, 'Locked. Finish the previous unit first (all cards introduced, most graduated).'),
+  if (state === 'locked') wrap.append(h('div', { class: 'card' }, h('p', {}, 'Locked. Finish the previous unit first (all cards introduced, most graduated) — it unlocks the day after, so each row gets a night of sleep and a review before the next one.'),
     h('button', { class: 'btn', onclick: () => { S.unlocked[u.id] = true; save(); go('unit', u); } }, 'Unlock anyway')));
   else wrap.append(h('div', { class: 'card' }, h('div', {}, `${st.intro}/${st.total} introduced · ${st.rev}/${st.total} graduated`)));
   if (u.kind === 'kana') {
@@ -164,7 +180,8 @@ function unit(u) {
       const m = Math.min(mastery('kr:' + k), CARDS['kw:' + k] ? mastery('kw:' + k) : 3);
       return h('button', { class: 'jp m' + m, onclick: () => go('practice', { k, r, m: CARDS['kr:' + k].m }) }, k, h('small', {}, r));
     })));
-    wrap.append(h('p', { class: 'small muted' }, 'Tap any character to practise writing it. Colour bar = mastery (learning → young → mature).'));
+    if (state !== 'locked') wrap.append(h('button', { class: 'btn primary wide', style: 'margin:10px 0', onclick: () => go('drill', u) }, 'Practise this row'));
+    wrap.append(h('p', { class: 'small muted' }, 'Tap any character to practise writing it. Colour bar = mastery (learning → young → mature). Row practice mixes reading and writing until every character is right, without touching the review schedule.'));
   } else {
     const ps = u.cards.filter(id => CARDS[id].kind === 'p').map(id => CARDS[id]);
     const vs = u.cards.filter(id => CARDS[id].kind === 'v').map(id => CARDS[id]);
@@ -212,8 +229,9 @@ function settings() {
   const chk = (k, label, hint) => h('label', { class: 'set' }, h('div', {}, label, hint ? h('div', { class: 'small muted' }, hint) : null), h('input', { type: 'checkbox', ...(S.settings[k] ? { checked: '' } : {}), onchange: e => set(k, e.target.checked) }));
   main.append(h('div', { class: 'card' },
     h('label', { class: 'set' }, h('div', {}, 'New cards per day'), h('input', { type: 'number', min: 0, max: 50, value: S.settings.newPerDay, onchange: e => set('newPerDay', +e.target.value || 0) })),
+    h('label', { class: 'set' }, h('div', {}, 'Reinforcement cards per session', h('div', { class: 'small muted' }, 'Weakest learned cards mixed into every session even when not due.')), h('input', { type: 'number', min: 0, max: 30, value: S.settings.extra, onchange: e => set('extra', +e.target.value || 0) })),
     chk('romaji', 'Show romaji', 'Turn off once kana feel comfortable — reading kana directly is the goal.'),
-    chk('tts', 'Speak Japanese (device voice)', jaVoice ? 'Japanese voice found: ' + jaVoice.name : 'No Japanese voice found. Android: Settings → System → Languages → Text-to-speech → Google → Install voice data → Japanese.'),
+    chk('tts', 'Sound: speak Japanese (device voice)', jaVoice ? 'Japanese voice found: ' + jaVoice.name : 'No Japanese voice found. Android: Settings → System → Languages → Text-to-speech → Google → Install voice data → Japanese.'),
     chk('strict', 'Strict drawing', 'Tighter tolerance when scoring your strokes.')));
   main.append(h('h2', {}, 'Backup'), h('div', { class: 'card' },
     h('p', { class: 'small muted' }, 'Progress lives only on this device. Export occasionally and keep the text somewhere safe.'),
@@ -325,13 +343,35 @@ function practice({ k, r, m }) {
   render();
 }
 
+// ---------- Row drill (repeat until every card is right; no scheduling effect) ----------
+function drill(u) {
+  const ids = u.cards.filter(id => CARDS[id].kind === 'kr' || CARDS[id].kind === 'kw');
+  let round = 0, queue = [], right = new Set(), wrong = 0;
+  const startRound = () => { round++; queue = shuffle(ids); right = new Set(); wrong = 0; step(); };
+  const step = () => {
+    setTitle(`Row practice · round ${round}`, h('button', { class: 'btn sm', onclick: () => go('unit', u) }, 'Exit'));
+    main.innerHTML = '';
+    if (!queue.length) {
+      main.append(h('div', { class: 'card prompt' }, h('div', { class: 'mid' }, wrong ? `Round ${round} done` : 'Clean round'), h('p', { class: 'muted' }, wrong ? `${wrong} misses were repeated until correct. One more clean round makes it stick.` : 'Every card right first time. Come back tomorrow and do it again — spacing is what makes it stay.'),
+        h('button', { class: 'btn primary wide', onclick: startRound }, 'Another round'), h('button', { class: 'btn wide', style: 'margin-top:8px', onclick: () => go('unit', u) }, 'Done')));
+      return;
+    }
+    main.append(h('div', { class: 'progress' }, h('i', { style: `width:${100 * right.size / ids.length}%` })));
+    const id = queue.shift(); const c = CARDS[id]; const box = h('div', { class: 'card' }); main.append(box);
+    const finish = g => { if (g === 0) { wrong++; queue.splice(Math.min(queue.length, 2 + Math.floor(Math.random() * 3)), 0, id); } else right.add(id); step(); };
+    if (c.kind === 'kr') quizKana(box, c, finish, true); else writeKana(box, c, finish, false, mastery(id) >= 2 ? 'free' : 'guided');
+  };
+  startRound();
+}
+
 // ---------- Study session ----------
 let session = null;
 function study(arg) {
   rollDay(); touchStreak();
   if (arg && arg.builder) { session = { queue: [], builderTier: arg.builder, i: 0, done: 0 }; setTitle('Sentence builder', h('button', { class: 'btn sm', onclick: () => go('sent') }, 'Exit')); return builderDrill(arg.builder); }
   const due = dueCards(); const nb = newCards(newBudget());
-  session = { queue: [...due, ...nb], done: 0, total: due.length + nb.length, reintro: new Set() };
+  const extra = extraCards(S.settings.extra || 0, new Set([...due, ...nb]));
+  session = { queue: [...due, ...nb, ...extra], extra: new Set(extra), done: 0, total: due.length + nb.length + extra.length };
   setTitle('Study', h('button', { class: 'btn sm', onclick: () => go('home') }, 'Exit'));
   nextCard();
 }
@@ -350,9 +390,11 @@ function nextCard() {
   const bar = h('div', { class: 'progress' }, h('i', { style: `width:${Math.min(100, 100 * session.done / Math.max(1, session.done + session.queue.length + 1))}%` }));
   main.append(bar);
   const isNew = st.s === 'new';
-  if (isNew && st.reps === 0) { S.day.n++; save(); }
-  const finish = g => { grade(id, g); session.done++; nextCard(); };
+  if (isNew && st.reps === 0) { S.day.n++; S.intro = S.intro || {}; if (!S.intro[c.unit]) S.intro[c.unit] = todayKey(); save(); }
+  const isExtra = session.extra && session.extra.has(id);
+  const finish = g => { if (isExtra) { if (g === 0) grade(id, 0); else { S.day.rev++; save(); } } else grade(id, g); session.done++; nextCard(); };
   const box = h('div', { class: 'card' }); main.append(box);
+  if (isExtra) box.append(h('div', { class: 'pill', style: 'margin-bottom:6px' }, 'Reinforce · not due yet'));
   if (c.kind === 'kr') isNew ? introKana(box, c, () => quizKana(box, c, finish)) : quizKana(box, c, finish);
   else if (c.kind === 'kw') writeKana(box, c, finish, isNew);
   else if (c.kind === 'v' || c.kind === 'ph') flipCard(box, c, finish, isNew);
@@ -387,8 +429,8 @@ function introKana(box, c, next) {
   setTimeout(() => speak(c.k), 300);
 }
 function kanaPool(c) { return (c.script === 'h' ? D.H : D.K).flatMap(L => L.kana).filter(([k]) => k !== c.k && k !== 'ー'); }
-function quizKana(box, c, finish) {
-  const st = cs(c.id); const reverse = st.reps % 2 === 1; // show romaji, pick kana
+function quizKana(box, c, finish, drillMode) {
+  const st = cs(c.id); const reverse = drillMode ? Math.random() < 0.5 : st.reps % 2 === 1; // show romaji, pick kana
   const pool = kanaPool(c);
   // prefer confusable distractors: same row/vowel or visually similar
   const sim = pool.filter(([k, r]) => r[0] === c.r[0] || r.slice(-1) === c.r.slice(-1));
@@ -400,13 +442,13 @@ function quizKana(box, c, finish) {
     speak(c.k);
     box.append(h('div', { class: 'answer' }, h('div', { class: 'mid jp' }, c.k, ' ', h('span', { class: 'muted', style: 'font-size:20px' }, c.r)), c.m && !ok ? h('div', { class: 'mnem' }, c.m) : null,
       ok ? h('button', { class: 'btn primary wide', style: 'margin-top:10px', onclick: () => finish(st.s === 'rev' ? 2 : 2) }, 'Next') : h('button', { class: 'btn wide', style: 'margin-top:10px', onclick: () => finish(0) }, 'Next (again)')));
-    if (ok && st.s === 'rev') { box.lastChild.replaceChildren(h('div', { class: 'mid jp' }, c.k, ' ', h('span', { class: 'muted', style: 'font-size:20px' }, c.r)), h('div', { class: 'small muted', style: 'margin-top:6px' }, 'How hard was that?'), gradeBar(finish, previewIvls(c.id))); }
+    if (ok && st.s === 'rev' && !drillMode) { box.lastChild.replaceChildren(h('div', { class: 'mid jp' }, c.k, ' ', h('span', { class: 'muted', style: 'font-size:20px' }, c.r)), h('div', { class: 'small muted', style: 'margin-top:6px' }, 'How hard was that?'), gradeBar(finish, previewIvls(c.id))); }
   }, 'data-k': k }, reverse ? k : r)));
   box.append(h('div', { class: 'tag' }, reverse ? 'Which kana?' : 'How is it read?'), h('div', { class: 'prompt' }, reverse ? h('div', { class: 'mid' }, c.r) : h('div', { class: 'big jp' }, c.k)), choices);
 }
 // -- kana writing
-function writeKana(box, c, finish, isNew) {
-  const st = cs(c.id); const mode = isNew || st.reps < 2 ? 'trace' : (st.s !== 'rev' || st.ivl < 4) ? 'guided' : 'free';
+function writeKana(box, c, finish, isNew, forceMode) {
+  const st = cs(c.id); const mode = forceMode || (isNew || st.reps < 2 ? 'trace' : (st.s !== 'rev' || st.ivl < 4) ? 'guided' : 'free');
   const fb = h('div', { class: 'feedback' }); let retries = 0;
   const pad = makePad({ char: c.k, mode,
     onStroke: (n, tot, ok, res, tries) => { if (ok === false) { retries++; fb.className = 'feedback bad'; fb.textContent = res.reversed ? 'Wrong direction — start at the red dot' : 'Not quite — try that stroke again'; if (tries >= 3) pad.reveal(); } else { fb.className = 'feedback ok'; fb.textContent = `Stroke ${n} of ${tot}`; } },
@@ -415,7 +457,7 @@ function writeKana(box, c, finish, isNew) {
       const g = res.msg ? 0 : s >= 0.75 ? 2 : s >= 0.5 ? 1 : 0;
       fb.className = 'feedback ' + (g ? 'ok' : 'bad'); fb.textContent = res.msg || `Score ${Math.round(res.score * 100)}%` + (retries ? ` · ${retries} retries` : '');
       speak(c.k);
-      bar.replaceChildren(h('div', { class: 'small muted', style: 'text-align:center;margin-top:4px' }, 'Auto-graded as ' + ['Again', 'Hard', 'Good', 'Easy'][g] + ' — adjust if needed'), gradeBar(finish, previewIvls(c.id)));
+      bar.replaceChildren(h('div', { class: 'small muted', style: 'text-align:center;margin-top:4px' }, 'Auto-graded as ' + ['Again', 'Hard', 'Good', 'Easy'][g] + ' — adjust if needed'), gradeBar(finish, forceMode ? null : previewIvls(c.id)));
     } });
   const bar = h('div', { class: 'padbar', style: 'margin-top:8px' }, h('button', { class: 'btn sm', onclick: () => pad.undo() }, 'Undo'), h('button', { class: 'btn sm', onclick: () => { pad.reveal(); retries += 2; } }, 'Hint'), mode === 'free' ? h('button', { class: 'btn sm primary', onclick: () => pad.check() }, 'Check') : null, h('button', { class: 'btn sm', onclick: () => { retries++; pad.reset(); } }, 'Clear'));
   box.append(h('div', { class: 'tag' }, { trace: 'Trace the character', guided: 'Write it — faint guide', free: 'Write it from memory' }[mode]),
@@ -478,7 +520,7 @@ function builderDrill(tier) {
 }
 
 // ---------- Service worker ----------
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => { const w = reg.installing; w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) toast('Update ready — reopen the app'); }); });
