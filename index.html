@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#1c1b22">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Kana</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{
+  --bg:#f6f4ef; --card:#ffffff; --ink:#1c1b22; --muted:#6c6a75; --line:#e3e0d8;
+  --accent:#c9432b; --accent-ink:#fff; --ok:#2e8b57; --warn:#d9932c; --bad:#c9432b; --soft:#efece4;
+  --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#1c1b22; --card:#26252e; --ink:#f2f0ea; --muted:#a19fa9; --line:#3a3944; --soft:#31303a; }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
+body{display:flex;flex-direction:column;min-height:100dvh}
+.jp{font-family:"Noto Sans JP","Hiragino Sans","Yu Gothic","Meiryo",system-ui,sans-serif}
+header{padding:calc(var(--safe-t) + 10px) 16px 8px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.3px}
+main{flex:1;padding:8px 16px calc(var(--safe-b) + 80px);overflow-y:auto}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:var(--safe-b)}
+nav button{flex:1;background:none;border:0;color:var(--muted);padding:10px 4px 8px;font-size:12px;display:flex;flex-direction:column;align-items:center;gap:2px}
+nav button .ic{font-size:20px;line-height:1}
+nav button.on{color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+h2{font-size:15px;margin:14px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+button.btn{background:var(--soft);color:var(--ink);border:0;border-radius:12px;padding:12px 16px;font-size:16px;font-weight:600;cursor:pointer}
+button.btn.primary{background:var(--accent);color:var(--accent-ink)}
+button.btn.wide{width:100%}
+button.btn:disabled{opacity:.45}
+button.btn.sm{padding:8px 12px;font-size:14px;border-radius:10px}
+.stat{display:flex;gap:10px}
+.stat>div{flex:1;background:var(--soft);border-radius:12px;padding:10px 12px}
+.stat b{display:block;font-size:24px;line-height:1.1}
+.stat span{font-size:12px;color:var(--muted)}
+/* study */
+.prompt{text-align:center;padding:12px 0}
+.prompt .big{font-size:96px;line-height:1.1;font-weight:500}
+.prompt .mid{font-size:34px;line-height:1.3;font-weight:500}
+.prompt .sub{color:var(--muted);margin-top:6px}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.choices button{background:var(--soft);border:2px solid transparent;border-radius:12px;padding:14px 4px;font-size:22px;color:var(--ink)}
+.choices button.ok{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 18%,var(--soft))}
+.choices button.bad{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 18%,var(--soft))}
+.grades{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+.grades button{border:0;border-radius:12px;padding:12px 4px;font-size:15px;font-weight:600;color:#fff}
+.grades button small{display:block;font-weight:400;font-size:11px;opacity:.85}
+.g0{background:#c9432b}.g1{background:#d9932c}.g2{background:#2e8b57}.g3{background:#2b6cb0}
+.answer{border-top:1px dashed var(--line);margin-top:12px;padding-top:12px;text-align:center}
+.progress{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:0 0 10px}
+.progress i{display:block;height:100%;background:var(--accent);width:0}
+.tiles{display:flex;flex-wrap:wrap;gap:8px;min-height:52px;padding:8px;border:1px dashed var(--line);border-radius:12px;margin:10px 0}
+.tiles.pool{border-style:solid;background:var(--soft)}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:20px;cursor:pointer}
+.tiles.pool .tile{background:var(--bg)}
+.tile.ok{border-color:var(--ok)}.tile.bad{border-color:var(--bad)}
+/* canvas */
+.pad{position:relative;width:100%;max-width:360px;aspect-ratio:1;margin:8px auto;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;touch-action:none}
+.pad canvas{position:absolute;inset:0;width:100%;height:100%}
+.pad .grid{position:absolute;inset:0;pointer-events:none;background:
+  linear-gradient(var(--line) 1px,transparent 1px) 50% 0/100% 50%,
+  linear-gradient(90deg,var(--line) 1px,transparent 1px) 0 50%/50% 100%;opacity:.5}
+.padbar{display:flex;gap:8px;justify-content:center;max-width:360px;margin:0 auto}
+.feedback{text-align:center;min-height:24px;font-weight:600}
+.feedback.ok{color:var(--ok)}.feedback.bad{color:var(--bad)}
+/* kana grid */
+.kgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.kgrid button{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 2px;font-size:22px;color:var(--ink);position:relative}
+.kgrid button small{display:block;font-size:10px;color:var(--muted)}
+.kgrid button.m1{border-bottom:3px solid var(--warn)}.kgrid button.m2{border-bottom:3px solid #6aa84f}.kgrid button.m3{border-bottom:3px solid var(--ok)}
+.kgrid button.locked{opacity:.35}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--soft);color:var(--muted)}
+.pill.on{background:var(--accent);color:#fff}
+.pat{padding:10px 0;border-bottom:1px solid var(--line)}
+.pat:last-child{border:0}
+.pat .jp{font-size:20px}
+input,textarea,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;width:100%}
+textarea{min-height:100px;font-family:monospace;font-size:12px}
+label.set{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);gap:12px}
+label.set:last-child{border:0}
+label.set input[type=number]{width:80px;text-align:center}
+label.set input[type=checkbox]{width:22px;height:22px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-b) + 90px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+.toast.show{opacity:1}
+.hidden{display:none!important}
+.mnem{background:var(--soft);border-radius:10px;padding:10px;margin-top:10px;font-size:14px}
+.tag{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600}
+.speak{background:none;border:1px solid var(--line);border-radius:999px;width:40px;height:40px;font-size:18px;color:var(--ink)}
+.lesson-list button{display:flex;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;color:var(--ink);align-items:center;gap:10px;font-size:15px}
+.lesson-list button.done{opacity:.7}
+.lesson-list button.locked{opacity:.4}
+.lesson-list .st{margin-left:auto;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header><h1 id="title">Kana</h1><div id="hdr-right" class="row"></div></header>
+<main id="main"></main>
+<nav>
+  <button data-v="home"><span class="ic">⌂</span>Home</button>
+  <button data-v="kana"><span class="ic jp">あ</span>Kana</button>
+  <button data-v="sent"><span class="ic jp">文</span>Sentences</button>
+  <button data-v="settings"><span class="ic">⚙</span>Settings</button>
+</nav>
+<div class="toast" id="toast"></div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
