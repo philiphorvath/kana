@@ -57,31 +57,48 @@ try { const j = JSON.parse(localStorage.getItem(KEY)); if (j) S = Object.assign(
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Could not save progress'); } }
 function rollDay() { const t = todayKey(); if (S.day.date !== t) { S.day = { date: t, n: 0, rev: 0 }; save(); } }
 function cs(id) { return S.cards[id] || (S.cards[id] = { s: 'new', due: 0, ivl: 0, ease: 2.5, reps: 0, lapses: 0, step: 0 }); }
-function touchStreak() {
-  const t = todayKey(); if (S.streak.last === t) return;
-  const y = new Date(); y.setDate(y.getDate() - 1); const yk = y.getFullYear() + '-' + (y.getMonth() + 1) + '-' + y.getDate();
-  S.streak.n = S.streak.last === yk ? S.streak.n + 1 : 1; S.streak.last = t;
-  S.log[t] = (S.log[t] || 0);
+const dayKey = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+function touchStreak() { // called on every graded card; counts a day once
+  const t = todayKey(); const st = S.streak; if (st.last === t) return;
+  if (st.freezes == null) st.freezes = 1; st.frozen = st.frozen || []; st.run = st.run || 0; st.best = st.best || 0;
+  if (!st.last || st.n === 0) st.n = 1;
+  else if (st.last === dayKey(1)) st.n++;
+  else if (st.last === dayKey(2) && st.freezes > 0) { st.freezes--; st.frozen.push(dayKey(1)); st.n++; st.run = 0; setTimeout(() => toast('Streak freeze used for yesterday'), 400); }
+  else { st.n = 1; st.run = 0; }
+  st.last = t; st.run++; st.best = Math.max(st.best, st.n);
+  if (st.freezes < 1 && st.run >= 7) { st.freezes = 1; st.run = 0; setTimeout(() => toast('Streak freeze earned'), 400); }
+}
+function streakView() { // what the streak is right now, before today's study
+  const st = S.streak; if (st.freezes == null) st.freezes = 1;
+  const alive = st.last === todayKey() || st.last === dayKey(1) || (st.last === dayKey(2) && st.freezes > 0);
+  return { n: alive ? st.n : 0, freezes: st.freezes, today: st.last === todayKey(), atRisk: st.last === dayKey(2) && st.freezes > 0, best: st.best || 0 };
 }
 
 // ---------- SRS (SM-2 + learning steps, Anki-like) ----------
 const LEARN = [1 * MIN, 10 * MIN], RELEARN = [10 * MIN], GRAD = 1, EASY = 4;
 function fuzz(d) { return d < 3 ? d : Math.round(d * (0.95 + Math.random() * 0.1)); }
-function grade(id, g) { // g: 0 again, 1 hard, 2 good, 3 easy
-  const c = cs(id), t = now(); c.reps++;
+function schedule(c, g, t) { // pure: mutates c only. g: 0 again, 1 hard, 2 good, 3 easy
+  c.reps++;
   if (c.s === 'new' || c.s === 'learn' || c.s === 'relearn') {
     const steps = c.s === 'relearn' ? RELEARN : LEARN;
     if (g === 0) { c.step = 0; c.s = c.s === 'relearn' ? 'relearn' : 'learn'; c.due = t + steps[0]; }
-    else if (g === 1) { c.s = c.s === 'relearn' ? 'relearn' : 'learn'; c.due = t + Math.round(steps[Math.min(c.step, steps.length - 1)] * 1.5); }
     else if (g === 3) { c.s = 'rev'; c.ivl = EASY; c.due = t + c.ivl * DAY; c.step = 0; }
-    else { c.step++; if (c.step >= steps.length) { c.s = 'rev'; c.ivl = c.ivl && c.s === 'relearn' ? c.ivl : GRAD; c.due = t + c.ivl * DAY; c.step = 0; } else { c.s = c.s === 'new' ? 'learn' : c.s; c.due = t + steps[c.step]; } }
+    else { // hard and good both advance a step; hard waits 1.5x longer. Every path terminates.
+      c.step++;
+      if (c.step >= steps.length) { const relearn = c.s === 'relearn'; c.s = 'rev'; c.ivl = relearn && c.ivl ? c.ivl : GRAD; c.due = t + c.ivl * DAY; c.step = 0; }
+      else { c.s = c.s === 'new' ? 'learn' : c.s; c.due = t + Math.round(steps[c.step] * (g === 1 ? 1.5 : 1)); }
+    }
   } else { // review
     if (g === 0) { c.lapses++; c.ease = Math.max(1.3, c.ease - 0.2); c.ivl = Math.max(1, Math.round(c.ivl * 0.3)); c.s = 'relearn'; c.step = 0; c.due = t + RELEARN[0]; }
     else if (g === 1) { c.ease = Math.max(1.3, c.ease - 0.15); c.ivl = fuzz(Math.max(c.ivl + 1, Math.round(c.ivl * 1.2))); c.due = t + c.ivl * DAY; }
     else if (g === 2) { c.ivl = fuzz(Math.max(c.ivl + 1, Math.round(c.ivl * c.ease))); c.due = t + c.ivl * DAY; }
     else { c.ease += 0.15; c.ivl = fuzz(Math.max(c.ivl + 2, Math.round(c.ivl * c.ease * 1.3))); c.due = t + c.ivl * DAY; }
   }
-  S.day.rev++; S.log[todayKey()] = (S.log[todayKey()] || 0) + 1; save();
+  return c;
+}
+function grade(id, g) {
+  schedule(cs(id), g, now());
+  S.day.rev++; S.log[todayKey()] = (S.log[todayKey()] || 0) + 1; touchStreak(); save();
 }
 const mastery = id => { const c = S.cards[id]; if (!c || c.s === 'new') return 0; if (c.s !== 'rev') return 1; return c.ivl >= 21 ? 3 : 2; };
 
@@ -141,7 +158,7 @@ function home() {
     h('div', { class: 'stat' },
       h('div', {}, h('b', {}, String(due)), h('span', {}, 'due now')),
       h('div', {}, h('b', {}, String(nb)), h('span', {}, 'new today')),
-      h('div', {}, h('b', {}, String(S.streak.n)), h('span', {}, 'day streak'))),
+      (() => { const sv = streakView(); return h('div', {}, h('b', {}, (sv.today ? '🔥' : '') + sv.n), h('span', {}, 'day streak' + (sv.atRisk ? ' · freeze will cover yesterday' : sv.freezes ? ' · 🧊 1 freeze' : ' · no freeze (7 days earns one)'))); })()),
     h('div', { class: 'card', style: 'margin-top:12px' },
       h('div', { class: 'tag' }, 'Now'),
       h('div', { style: 'font-size:18px;font-weight:600;margin:4px 0 10px' }, cu ? cu.name : 'All units introduced — keep reviewing'),
@@ -367,7 +384,7 @@ function drill(u) {
 // ---------- Study session ----------
 let session = null;
 function study(arg) {
-  rollDay(); touchStreak();
+  rollDay();
   if (arg && arg.builder) { session = { queue: [], builderTier: arg.builder, i: 0, done: 0 }; setTitle('Sentence builder', h('button', { class: 'btn sm', onclick: () => go('sent') }, 'Exit')); return builderDrill(arg.builder); }
   const due = dueCards(); const nb = newCards(newBudget());
   const extra = extraCards(S.settings.extra || 0, new Set([...due, ...nb]));
@@ -382,7 +399,7 @@ function nextCard() {
   session.queue.push(...learnDue);
   if (!session.queue.length) { // learning cards due within 20 min: wait for them (spacing matters), or skip ahead
     const soon = dueCards(20 * MIN);
-    if (soon.length) { if (!session.skipWait) return waitScreen(soon); session.queue.push(...soon); }
+    if (soon.length) { if (!session.skipWait) return waitScreen(soon); session.skipWait = false; session.queue.push(...soon); }
   }
   if (!session.queue.length) { refreshUnlocks(); return sessionDone(); }
   const id = session.queue.shift(); const c = CARDS[id]; const st = cs(id);
@@ -392,7 +409,12 @@ function nextCard() {
   const isNew = st.s === 'new';
   if (isNew && st.reps === 0) { S.day.n++; S.intro = S.intro || {}; if (!S.intro[c.unit]) S.intro[c.unit] = todayKey(); save(); }
   const isExtra = session.extra && session.extra.has(id);
-  const finish = g => { if (isExtra) { if (g === 0) grade(id, 0); else { S.day.rev++; save(); } } else grade(id, g); session.done++; nextCard(); };
+  session.seen = session.seen || {}; session.seen[id] = (session.seen[id] || 0) + 1;
+  const finish = g => {
+    if (isExtra) { if (g === 0) grade(id, 0); else { S.day.rev++; save(); } }
+    else { if (g > 0 && st.s !== 'rev' && session.seen[id] >= 4) st.step = 99; grade(id, g); } // seen 4+ times this session: any pass graduates
+    session.done++; nextCard();
+  };
   const box = h('div', { class: 'card' }); main.append(box);
   if (isExtra) box.append(h('div', { class: 'pill', style: 'margin-bottom:6px' }, 'Reinforce · not due yet'));
   if (c.kind === 'kr') isNew ? introKana(box, c, () => quizKana(box, c, finish)) : quizKana(box, c, finish);
@@ -404,7 +426,7 @@ function waitScreen(soon) {
   main.innerHTML = ''; const t = h('div', { class: 'mid' }); let timer;
   const tick = () => { const d = S.cards[soon[0]].due - now(); if (d <= 0) { clearInterval(timer); session.queue.push(...dueCards()); return nextCard(); } const sec = Math.ceil(d / 1000); t.textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
   timer = setInterval(tick, 500); session.timer = timer; tick();
-  main.append(h('div', { class: 'card prompt' }, h('div', { class: 'tag' }, `${soon.length} card${soon.length > 1 ? 's' : ''} still in learning`), h('p', { class: 'muted small' }, 'Short gaps before re-testing make the memory stick. Next card in'), t,
+  main.append(h('div', { class: 'card prompt' }, h('div', { class: 'tag' }, `${soon.length} card${soon.length > 1 ? 's' : ''} still in learning`), h('div', { class: 'jp', style: 'font-size:22px;margin:4px 0' }, soon.slice(0, 12).map(id => CARDS[id].k || '').join(' ')), h('p', { class: 'muted small' }, 'Short gaps before re-testing make the memory stick. Next card in'), t,
     h('button', { class: 'btn primary wide', style: 'margin-top:12px', onclick: () => { clearInterval(timer); session.skipWait = true; session.queue.push(...dueCards(20 * MIN)); nextCard(); } }, 'Show now'),
     h('button', { class: 'btn wide', style: 'margin-top:8px', onclick: () => { clearInterval(timer); refreshUnlocks(); sessionDone(); } }, 'End session')));
 }
@@ -416,7 +438,7 @@ function sessionDone() {
     newCards(999).length ? h('button', { class: 'btn wide', style: 'margin-top:8px', onclick: () => { S.settings.newPerDay += 5; save(); go('study'); } }, 'Learn 5 more new cards') : null));
 }
 const gradeBar = (finish, ivls) => h('div', { class: 'grades' }, [['Again', 'g0'], ['Hard', 'g1'], ['Good', 'g2'], ['Easy', 'g3']].map(([t, cls], i) => h('button', { class: cls, onclick: () => finish(i) }, t, h('small', {}, ivls ? ivls[i] : ''))));
-function previewIvls(id) { const c = cs(id); const f = i => { const cp = JSON.parse(JSON.stringify(c)); const save0 = S.cards[id]; S.cards[id] = cp; const day0 = S.day.rev, log0 = S.log[todayKey()]; const ls = localStorage.setItem; localStorage.setItem = () => { }; grade(id, i); localStorage.setItem = ls; const d = cp.due - now(); S.cards[id] = save0; S.day.rev = day0; S.log[todayKey()] = log0; return d < MIN * 59 ? Math.round(d / MIN) + 'm' : d < DAY ? Math.round(d / 3600000) + 'h' : Math.round(d / DAY) + 'd'; }; return [0, 1, 2, 3].map(f); }
+function previewIvls(id) { const c = cs(id), t = now(); return [0, 1, 2, 3].map(i => { const d = schedule(JSON.parse(JSON.stringify(c)), i, t).due - t; return d < MIN * 59 ? Math.round(d / MIN) + 'm' : d < DAY ? Math.round(d / 3600000) + 'h' : Math.round(d / DAY) + 'd'; }); }
 
 // -- kana intro
 function introKana(box, c, next) {
@@ -520,7 +542,7 @@ function builderDrill(tier) {
 }
 
 // ---------- Service worker ----------
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => { const w = reg.installing; w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) toast('Update ready — reopen the app'); }); });
